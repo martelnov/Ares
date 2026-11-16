@@ -1,0 +1,42 @@
+# Rust / Cargo
+target/
+**/target/
+target-lab/
+*.rlib
+*.rmeta
+
+# TLS private keys and certificates
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+
+# Forensic evidence and authentication captures
+*.jsonl
+*.pcap
+*.pcapng
+*.kirbi
+*.ccache
+*.ntds
+*.dmp
+
+# Runtime files
+*.log
+*.pid
+*.sock
+*.fifo
+
+# Local configuration and secrets
+.env
+.env.*
+*.secret
+*.secrets
+config/local/
+config/private/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
