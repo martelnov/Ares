@@ -4057,7 +4057,15 @@ impl RdpServer {
             return Ok(());
         };
 
-        self.finalize_negotiated(negotiated).await
+        // PHOBOS: authentication is the absolute end of the protocol.
+        // Never finalize an RDP session, even if authentication succeeds.
+        drop(negotiated);
+
+        tracing::warn!(
+            "PHOBOS: negotiation completed; RDP session permanently denied"
+        );
+
+        Ok(())
     }
 
     async fn prepare_pending_connection(&mut self) -> PendingConnection {
