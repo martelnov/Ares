@@ -3911,11 +3911,20 @@ impl RdpServer {
         let local_addr = stream
             .local_addr()
             .map_err(|error| ServerError::io("get local address", error))?;
+        let peer = stream.peer_addr().ok();
         let pending = self.prepare_pending_connection().await;
-        let Some(mut connection) = pending
+
+        let negotiation = pending
             .negotiate_and_authenticate(stream, TransportTls::Managed)
-            .await?
-        else {
+            .await;
+
+        // PHOBOS: preserve the verified FENIX capture path.
+        // Authentication failure must never silently lose the identity.
+        if let Err(ref error) = negotiation {
+            Self::fenix_capture(peer, error);
+        }
+
+        let Some(mut connection) = negotiation? else {
             return Err(ServerError::reason(
                 "TLS handshake failed",
                 "TLS negotiation did not complete",
