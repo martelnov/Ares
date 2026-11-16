@@ -51,6 +51,21 @@ async fn main() -> Result<()> {
         domain: None,
     }));
 
+    // PHOBOS must never listen without a writable forensic log.
+    let log_path = std::env::var("RDP_HONEYPOT_LOG")
+        .unwrap_or_else(|_| "/var/log/rdp-honeypot/events.jsonl".into());
+
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("PHOBOS: forensic log unavailable: {log_path}"))?;
+
+    log_file.sync_all()
+        .context("PHOBOS: forensic log synchronization failed")?;
+
+    drop(log_file);
+
     let listener = TcpListener::bind(bind_addr).await
         .context("failed to bind PHOBOS listener")?;
 
