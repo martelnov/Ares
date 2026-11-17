@@ -300,12 +300,16 @@ async fn main() -> Result<()> {
 
     loop {
         let (stream, peer) = listener.accept().await?;
+        let destination = stream.local_addr()
+            .context("cannot determine RDP destination address")?;
         let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
         ares_ipc::emit("CONNECTION", json!({
             "connection_id": connection_id,
             "source_ip": peer.ip().to_string(),
             "source_port": peer.port(),
-            "local_port": actual_bind.port(),
+            "destination_ip": destination.ip().to_string(),
+            "destination_port": destination.port(),
+            "local_port": destination.port(),
             "protocol": "RDP"
         }));
 
