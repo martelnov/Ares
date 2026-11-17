@@ -29,6 +29,21 @@ use x509_cert::der::Decode as _;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CONNECTIONS: usize = 4;
 
+
+// PHOBOS: outbound authentication requests are forbidden.
+struct DenyOutbound;
+
+impl ironrdp_tokio::NetworkClient for DenyOutbound {
+    async fn send(
+        &mut self,
+        _request: &sspi::generator::NetworkRequest,
+    ) -> ironrdp_connector::ConnectorResult<Vec<u8>> {
+        Err(ironrdp_connector::general_err!(
+            "PHOBOS: outbound network access denied"
+        ))
+    }
+}
+
 fn load_tls(
     cert_path: &Path,
     key_path: &Path,
@@ -186,7 +201,7 @@ async fn handle_connection(
     let result = ironrdp_acceptor::accept_credssp(
         &mut framed,
         &mut acceptor,
-        &mut ironrdp_tokio::reqwest::ReqwestNetworkClient::new(),
+        &mut DenyOutbound,
         "rdp-client".to_owned().into(),
         public_key.to_vec(),
         None,

@@ -23,10 +23,11 @@ tokio-rustls = "0.26"
 x509-cert = "0.3"
 
 ironrdp-acceptor = { path = "../crates/ironrdp-acceptor" }
-ironrdp-tokio = { path = "../crates/ironrdp-tokio", features = ["reqwest"] }
+ironrdp-connector = { path = "../crates/ironrdp-connector" }
+ironrdp-tokio = { path = "../crates/ironrdp-tokio" }
 ironrdp-pdu = { path = "../crates/ironrdp-pdu" }
 
-sspi = { version = "0.23.1", features = ["network_client"] }
+sspi = { version = "0.23.1" }
 
 [workspace]
 
