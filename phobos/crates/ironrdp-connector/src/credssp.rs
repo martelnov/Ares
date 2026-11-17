@@ -245,6 +245,7 @@ impl CredsspSequence {
                 }
                 .into()
             }
+            #[cfg(feature = "scard")]
             Credentials::SmartCard { pin, config } => match config {
                 Some(config) => {
                     let cert: Certificate = picky_asn1_der::from_bytes(&config.certificate)
@@ -271,6 +272,10 @@ impl CredsspSequence {
                 None => {
                     return Err(general_err!("smart card configuration missing"));
                 }
+            },
+            #[cfg(not(feature = "scard"))]
+            Credentials::SmartCard { .. } => {
+                return Err(general_err!("SmartCard support disabled"));
             },
         };
 

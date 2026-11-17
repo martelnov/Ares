@@ -18,6 +18,7 @@ use ironrdp_pdu::nego::SecurityProtocol;
 use ironrdp_pdu::rdp::client_info::Credentials;
 use ironrdp_tokio::TokioFramed;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Semaphore;
 use tokio::time::timeout;
 use tokio_rustls::rustls;
 use tokio_rustls::rustls::pki_types::pem::PemObject as _;
@@ -26,6 +27,7 @@ use tokio_rustls::TlsAcceptor;
 use x509_cert::der::Decode as _;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_CONNECTIONS: usize = 4;
 
 fn load_tls(
     cert_path: &Path,
@@ -207,6 +209,9 @@ async fn handle_connection(
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    let local = tokio::task::LocalSet::new();
+
+    local.run_until(async {
     let args: Vec<String> = std::env::args().collect();
 
     anyhow::ensure!(
@@ -237,33 +242,58 @@ async fn main() -> Result<()> {
 
     println!("PHOBOS Minimal listening on {bind_addr}");
 
+    let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    let public_key = Arc::new(public_key);
+
+    println!("PHOBOS: maximum concurrent connections: {MAX_CONNECTIONS}");
+
     loop {
         let (stream, peer) = listener.accept().await?;
 
+        // Do not queue unlimited pending connections.
+        let permit = match semaphore.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                eprintln!("PHOBOS: connection limit reached, rejecting {peer}");
+                drop(stream);
+                continue;
+            }
+        };
+
         println!("PHOBOS connection: {peer}");
 
-        let result = timeout(
-            HANDSHAKE_TIMEOUT,
-            handle_connection(
-                stream,
-                peer,
-                &tls,
-                &public_key,
-                identity.clone(),
-            ),
-        )
-        .await;
+        let tls = tls.clone();
+        let public_key = Arc::clone(&public_key);
+        let identity = identity.clone();
 
-        match result {
-            Ok(Ok(())) => {
-                eprintln!("PHOBOS: connection closed: {peer}");
+        tokio::task::spawn_local(async move {
+            // Permit is held until this connection finishes.
+            let _permit = permit;
+
+            let result = timeout(
+                HANDSHAKE_TIMEOUT,
+                handle_connection(
+                    stream,
+                    peer,
+                    &tls,
+                    public_key.as_slice(),
+                    identity,
+                ),
+            )
+            .await;
+
+            match result {
+                Ok(Ok(())) => {
+                    eprintln!("PHOBOS: connection closed: {peer}");
+                }
+                Ok(Err(error)) => {
+                    eprintln!("PHOBOS: handshake failed: {peer}: {error}");
+                }
+                Err(_) => {
+                    eprintln!("PHOBOS: handshake timeout: {peer}");
+                }
             }
-            Ok(Err(error)) => {
-                eprintln!("PHOBOS: handshake failed: {peer}: {error}");
-            }
-            Err(_) => {
-                eprintln!("PHOBOS: handshake timeout: {peer}");
-            }
-        }
+        });
     }
+    }).await
 }
