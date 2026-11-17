@@ -2,6 +2,7 @@
 //! TCP -> X.224 -> TLS -> CredSSP/NTLM -> FENIX -> EXIT
 //! No RDP session, desktop, graphics, audio or virtual channels.
 
+mod ares_ipc;
 mod forensic_log;
 mod honeypot_config;
 
@@ -9,10 +10,12 @@ use std::error::Error;
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use serde_json::json;
 use ironrdp_acceptor::{Acceptor, BeginResult, DesktopSize};
 use ironrdp_pdu::nego::SecurityProtocol;
 use ironrdp_pdu::rdp::client_info::Credentials;
@@ -28,6 +31,7 @@ use x509_cert::der::Decode as _;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CONNECTIONS: usize = 4;
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 
 // PHOBOS: outbound authentication requests are forbidden.
@@ -100,6 +104,7 @@ fn check_forensic_log() -> Result<()> {
 
 fn fenix_capture(
     peer: SocketAddr,
+    connection_id: u64,
     error: &(dyn Error + 'static),
 ) {
     let mut current = Some(error);
@@ -135,10 +140,19 @@ fn fenix_capture(
             match result {
                 Ok(()) => {
                     eprintln!("FENIX: identity captured and saved");
+                    ares_ipc::emit("CAPTURED", json!({
+                        "connection_id": connection_id,
+                        "source_ip": peer.ip().to_string(),
+                        "source_port": peer.port()
+                    }));
                     std::process::exit(0);
                 }
                 Err(error) => {
                     eprintln!("FENIX: forensic write failed: {error}");
+                    ares_ipc::emit("ERROR", json!({
+                        "connection_id": connection_id,
+                        "code": "FORENSIC_WRITE_FAILED"
+                    }));
                     std::process::exit(1);
                 }
             }
@@ -151,6 +165,7 @@ fn fenix_capture(
 async fn handle_connection(
     stream: TcpStream,
     peer: SocketAddr,
+    connection_id: u64,
     tls: &TlsAcceptor,
     public_key: &[u8],
     identity: sspi::ntlm::NtlmServerIdentity,
@@ -209,7 +224,7 @@ async fn handle_connection(
     .await;
 
     if let Err(ref error) = result {
-        fenix_capture(peer, error);
+        fenix_capture(peer, connection_id, error);
     }
 
     match result {
@@ -248,6 +263,7 @@ async fn main() -> Result<()> {
     )?;
 
     check_forensic_log()?;
+    ares_ipc::init();
 
     let identity = config.ntlm_identity();
 
@@ -256,20 +272,52 @@ async fn main() -> Result<()> {
         .context("cannot bind PHOBOS listener")?;
 
     println!("PHOBOS Minimal listening on {bind_addr}");
+    let actual_bind = listener.local_addr()?;
+    ares_ipc::emit("READY", json!({
+        "listen_ip": actual_bind.ip().to_string(),
+        "listen_port": actual_bind.port(),
+        "max_connections": MAX_CONNECTIONS
+    }));
 
     let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     let public_key = Arc::new(public_key);
 
     println!("PHOBOS: maximum concurrent connections: {MAX_CONNECTIONS}");
 
+    let heartbeat_sem = Arc::clone(&semaphore);
+    tokio::task::spawn_local(async move {
+        let mut ticks = tokio::time::interval(Duration::from_secs(5));
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        ticks.tick().await;
+        loop {
+            ticks.tick().await;
+            ares_ipc::emit("HEARTBEAT", json!({
+                "active_connections":
+                    MAX_CONNECTIONS - heartbeat_sem.available_permits()
+            }));
+        }
+    });
+
     loop {
         let (stream, peer) = listener.accept().await?;
+        let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
+        ares_ipc::emit("CONNECTION", json!({
+            "connection_id": connection_id,
+            "source_ip": peer.ip().to_string(),
+            "source_port": peer.port(),
+            "local_port": actual_bind.port(),
+            "protocol": "RDP"
+        }));
 
         // Do not queue unlimited pending connections.
         let permit = match semaphore.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => {
                 eprintln!("PHOBOS: connection limit reached, rejecting {peer}");
+                ares_ipc::emit("DISCONNECT", json!({
+                    "connection_id": connection_id,
+                    "reason": "connection_limit"
+                }));
                 drop(stream);
                 continue;
             }
@@ -290,6 +338,7 @@ async fn main() -> Result<()> {
                 handle_connection(
                     stream,
                     peer,
+                    connection_id,
                     &tls,
                     public_key.as_slice(),
                     identity,
@@ -300,12 +349,24 @@ async fn main() -> Result<()> {
             match result {
                 Ok(Ok(())) => {
                     eprintln!("PHOBOS: connection closed: {peer}");
+                    ares_ipc::emit("DISCONNECT", json!({
+                        "connection_id": connection_id,
+                        "reason": "closed"
+                    }));
                 }
                 Ok(Err(error)) => {
                     eprintln!("PHOBOS: handshake failed: {peer}: {error}");
+                    ares_ipc::emit("DISCONNECT", json!({
+                        "connection_id": connection_id,
+                        "reason": "handshake_failed"
+                    }));
                 }
                 Err(_) => {
                     eprintln!("PHOBOS: handshake timeout: {peer}");
+                    ares_ipc::emit("DISCONNECT", json!({
+                        "connection_id": connection_id,
+                        "reason": "handshake_timeout"
+                    }));
                 }
             }
         });
