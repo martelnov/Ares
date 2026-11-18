@@ -1,0 +1,7 @@
+[package]
+name = "hades"
+version = "0.1.0"
+edition = "2021"
+description = "OLYMP HADES - early MS-TDS PRELOGIN protocol prototype"
+
+[dependencies]
