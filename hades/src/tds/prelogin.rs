@@ -141,10 +141,18 @@ impl Prelogin {
 /// Advertises ENCRYPT_NOT_SUP because TLS is NOT implemented yet.
 /// Therefore this prototype must NOT accept or process credentials.
 pub fn response_payload(client: &Prelogin) -> Vec<u8> {
+    response_payload_with_encryption(client, 2)
+}
+
+/// Construct a PRELOGIN response with explicitly selected ENCRYPTION.
+/// 2 = TLS unsupported (legacy smoke test); 3 = TLS mandatory.
+/// Only use value 3 if the server can actually complete TDS 7.x TLS.
+pub fn response_payload_with_encryption(client: &Prelogin, encryption: u8) -> Vec<u8> {
+    assert!(matches!(encryption, 2 | 3));
     // VERSION, ENCRYPTION, INSTOPT, optionally MARS.
     let mut fields: Vec<(u8, Vec<u8>)> = vec![
         (VERSION, vec![15, 0, 0, 0, 0, 0]),
-        (ENCRYPTION, vec![2]), // ENCRYPT_NOT_SUP
+        (ENCRYPTION, vec![encryption]),
         (INSTOPT, vec![0]),
     ];
     if client.mars.is_some() {
@@ -189,6 +197,13 @@ mod tests {
         let response = Prelogin::parse(&response_payload(&p)).unwrap();
         assert_eq!(response.encryption, Some(2));
         assert_eq!(response.instance_name, Some(vec![0]));
+    }
+
+    #[test]
+    fn can_require_tls_when_tls_engine_is_enabled() {
+        let p = Prelogin::parse(&valid()).unwrap();
+        let response = Prelogin::parse(&response_payload_with_encryption(&p, 3)).unwrap();
+        assert_eq!(response.encryption, Some(3));
     }
 
     #[test]

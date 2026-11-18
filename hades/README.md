@@ -1,3 +1,9 @@
+> **Development note (0.2c):** This README documents the original PRELOGIN
+> prototype. The current branch additionally contains LOGIN7 parsing, TDS
+> framing, and opt-in local-only TLS handshake testing. See
+> [README-0.2a.md](README-0.2a.md), [README-0.2b.md](README-0.2b.md), and
+> [README-0.2c.md](README-0.2c.md). No real login is accepted yet.
+
 # HADES 0.1 - PRELOGIN protocol prototype
 
 This is the first, **deliberately incomplete** milestone for OLYMP HADES,

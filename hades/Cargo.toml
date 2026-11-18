@@ -2,6 +2,8 @@
 name = "hades"
 version = "0.1.0"
 edition = "2021"
-description = "OLYMP HADES - early MS-TDS PRELOGIN protocol prototype"
+description = "OLYMP HADES - experimental MS-TDS authentication honeypot"
 
 [dependencies]
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
+rustls-pemfile = "2.2"
