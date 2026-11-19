@@ -1,8 +1,8 @@
-> **Development note (0.2c):** This README documents the original PRELOGIN
-> prototype. The current branch additionally contains LOGIN7 parsing, TDS
-> framing, and opt-in local-only TLS handshake testing. See
-> [README-0.2a.md](README-0.2a.md), [README-0.2b.md](README-0.2b.md), and
-> [README-0.2c.md](README-0.2c.md). No real login is accepted yet.
+> **Development note (0.2d):** This README describes the original PRELOGIN
+> prototype. LOGIN7 parsing, TDS framing, TLS, and local-only forensic SQL
+> authentication capture are described in [README-0.2a.md](README-0.2a.md),
+> [README-0.2b.md](README-0.2b.md), [README-0.2c.md](README-0.2c.md), and
+> [README-0.2d.md](README-0.2d.md). No login is ever accepted.
 
 # HADES 0.1 - PRELOGIN protocol prototype
 

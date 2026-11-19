@@ -40,3 +40,7 @@ config/private/
 *.bak
 *.swp
 *~
+
+# Python bytecode
+__pycache__/
+*.py[cod]
