@@ -64,6 +64,11 @@ struct SourceMeta<'a> {
 }
 
 #[derive(Serialize)]
+struct SessionMeta<'a> {
+    id: &'a str,
+}
+
+#[derive(Serialize)]
 struct AuthenticationMeta<'a> {
     method: &'static str,
     username: &'a str,
@@ -93,6 +98,71 @@ struct ForensicEvent<'a> {
     source: SourceMeta<'a>,
     authentication: AuthenticationMeta<'a>,
     sql: SqlMeta<'a>,
+    destination: SourceMeta<'a>,
+    session: SessionMeta<'a>,
+}
+
+/// A TCP connection is evidence even if the peer sends no TDS bytes.
+/// Record this BEFORE attempting PRELOGIN or TLS. An event ID identifies
+/// this record; the separate session ID ties it to any later LOGIN7 event.
+#[derive(Serialize)]
+struct ConnectionEvent<'a> {
+    #[serde(rename = "@timestamp")]
+    timestamp: &'a str,
+    event: EventMeta<'a>,
+    sensor: SensorMeta,
+    source: SourceMeta<'a>,
+    destination: SourceMeta<'a>,
+    session: SessionMeta<'a>,
+}
+
+fn persist_record(file: &mut File, record: &impl Serialize) -> io::Result<()> {
+    let mut bytes = Zeroizing::new(serde_json::to_vec(record).map_err(io::Error::other)?);
+    bytes.push(b'\n');
+    file.write_all(&bytes)?;
+    file.sync_data()
+}
+
+/// Persist a completed TCP connection without waiting for PRELOGIN.
+/// Returns the session ID only after the JSONL has been synchronized.
+/// If persistence fails, the caller must stop accepting connections.
+pub fn persist_connection(
+    file: &mut File,
+    peer: SocketAddr,
+    local: SocketAddr,
+) -> io::Result<String> {
+    let timestamp = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .map_err(io::Error::other)?;
+    let event_id = Uuid::new_v4().to_string();
+    let session_id = Uuid::new_v4().to_string();
+    let peer_ip = peer.ip().to_string();
+    let local_ip = local.ip().to_string();
+    let event = ConnectionEvent {
+        timestamp: &timestamp,
+        event: EventMeta {
+            id: &event_id,
+            action: "tcp_connect",
+            category: ["network"],
+            outcome: "success",
+            severity: "critical",
+        },
+        sensor: SensorMeta {
+            name: "hades",
+            protocol: "mssql",
+        },
+        source: SourceMeta {
+            ip: &peer_ip,
+            port: peer.port(),
+        },
+        destination: SourceMeta {
+            ip: &local_ip,
+            port: local.port(),
+        },
+        session: SessionMeta { id: &session_id },
+    };
+    persist_record(file, &event)?;
+    Ok(session_id)
 }
 
 fn decode_password(input: &[u8]) -> io::Result<Zeroizing<String>> {
@@ -121,12 +191,19 @@ fn decode_password(input: &[u8]) -> io::Result<Zeroizing<String>> {
 /// Append one complete event; synchronize the file before returning success.
 /// No separate metadata-only feed: this JSONL contains captured passwords.
 /// Never call this function with production or organizational credentials in tests.
-pub fn persist_login(file: &mut File, addr: SocketAddr, login: &Login7) -> io::Result<String> {
+pub fn persist_login(
+    file: &mut File,
+    addr: SocketAddr,
+    local: SocketAddr,
+    session_id: &str,
+    login: &Login7,
+) -> io::Result<String> {
     let timestamp = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .map_err(io::Error::other)?;
     let id = Uuid::new_v4().to_string();
     let ip = addr.ip().to_string();
+    let local_ip = local.ip().to_string();
     let password = if login.integrated_security {
         None
     } else {
@@ -171,11 +248,13 @@ pub fn persist_login(file: &mut File, addr: SocketAddr, login: &Login7) -> io::R
             requested_server: &login.server_name,
             tds_version: login.tds_version,
         },
+        destination: SourceMeta {
+            ip: &local_ip,
+            port: local.port(),
+        },
+        session: SessionMeta { id: session_id },
     };
-    let mut bytes = Zeroizing::new(serde_json::to_vec(&record).map_err(io::Error::other)?);
-    bytes.push(b'\n');
-    file.write_all(&bytes)?;
-    file.sync_data()?;
+    persist_record(file, &record)?;
     Ok(id)
 }
 
@@ -186,6 +265,27 @@ mod tests {
     #[test]
     fn invalid_password_is_rejected() {
         assert!(decode_password(&[0u8]).is_err());
+    }
+
+    #[test]
+    fn tcp_connect_is_durable_and_contains_no_authentication() {
+        let path = std::env::temp_dir().join(format!("hades-connect-test-{}", Uuid::new_v4()));
+        let mut file = open_evidence(&path).unwrap();
+        let peer: SocketAddr = "127.0.0.1:41234".parse().unwrap();
+        let local: SocketAddr = "127.0.0.1:11433".parse().unwrap();
+        let session_id = persist_connection(&mut file, peer, local).unwrap();
+        drop(file);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        let event: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(event["event"]["action"], "tcp_connect");
+        assert_eq!(event["event"]["severity"], "critical");
+        assert_eq!(event["source"]["port"], 41234);
+        assert_eq!(event["destination"]["port"], 11433);
+        assert_eq!(event["session"]["id"], session_id);
+        assert_ne!(event["event"]["id"], event["session"]["id"]);
+        assert!(event.get("authentication").is_none());
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

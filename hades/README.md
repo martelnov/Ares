@@ -4,6 +4,11 @@
 > [README-0.2b.md](README-0.2b.md), [README-0.2c.md](README-0.2c.md), and
 > [README-0.2d.md](README-0.2d.md). No login is ever accepted.
 
+**Current milestone (0.3):** every accepted TCP connection is persisted as a
+CRITICAL JSONL event before PRELOGIN, and correlated with any subsequent LOGIN7
+via `session.id`. See [README-0.3.md](README-0.3.md). A protected evidence file
+is mandatory at startup; ARES IPC is not implemented.
+
 # HADES 0.1 - PRELOGIN protocol prototype
 
 This is the first, **deliberately incomplete** milestone for OLYMP HADES,

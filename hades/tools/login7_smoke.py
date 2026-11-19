@@ -98,12 +98,18 @@ def main():
     with log.open("rb") as fh:
         fh.seek(before)
         entries = [json.loads(line) for line in fh if line.strip()]
-    assert len(entries) == 1, f"expected one new forensic event, got {len(entries)}"
-    event = entries[0]
+    assert len(entries) == 2, f"expected CONNECT + LOGIN7 events, got {len(entries)}"
+    connect, event = entries
+    assert connect["event"]["action"] == "tcp_connect"
+    assert connect["event"]["severity"] == "critical"
+    assert "authentication" not in connect, "CONNECT must not contain credentials"
+    assert event["event"]["action"] == "authentication_attempt"
+    assert event["session"]["id"] == connect["session"]["id"]
+    assert event["event"]["id"] != connect["event"]["id"]
     assert event["authentication"]["username"] == USERNAME
     assert event["authentication"]["password"] == PASSWORD
     assert event["event"]["outcome"] == "failure"
-    print("OK: TLS LOGIN7 -> durable JSONL with fake password -> TDS 18456 login failure")
+    print("OK: immediate CONNECT + TLS LOGIN7 correlated in JSONL -> TDS 18456")
 
 
 if __name__ == "__main__":

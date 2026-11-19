@@ -1,6 +1,6 @@
 //! Local-only HADES protocol prototype.
 //! NOT READY FOR HONEYPOT DEPLOYMENT: local-only authentication prototype; no IPC.
-use hades::forensic::{open_evidence, persist_login};
+use hades::forensic::{open_evidence, persist_connection, persist_login};
 use hades::tds::login7::Login7;
 use hades::tds::packet::{read_login7, read_prelogin, response_packet};
 use hades::tds::prelogin::{response_payload, response_payload_with_encryption, Prelogin};
@@ -19,7 +19,8 @@ use zeroize::Zeroizing;
 fn handle(
     mut conn: TcpStream,
     tls: Option<Arc<ServerConfig>>,
-    forensic: Option<&mut File>,
+    forensic: &mut File,
+    session_id: &str,
 ) -> Result<(), Box<dyn Error>> {
     conn.set_read_timeout(Some(Duration::from_secs(5)))?;
     conn.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -43,9 +44,15 @@ fn handle(
         let bytes = Zeroizing::new(read_login7(&mut connection)?);
         let login = Login7::parse(&bytes)?;
         let peer = connection.sock.peer_addr()?;
-        let file = forensic.ok_or("TLS enabled without a forensic evidence sink")?;
+        // The authentication record has the same session ID as TCP CONNECT.
         // The evidence must reach stable storage before the server responds.
-        let evidence_id = persist_login(file, peer, &login)?;
+        let evidence_id = persist_login(
+            forensic,
+            peer,
+            connection.sock.local_addr()?,
+            session_id,
+            &login,
+        )?;
         eprintln!("LOGIN7 captured peer={peer} evidence_id={evidence_id}");
         connection.write_all(&login_failed_response()?)?;
         connection.flush()?;
@@ -70,22 +77,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         (Err(_), Err(_)) => None,
         _ => return Err("set both HADES_TLS_CERT and HADES_TLS_KEY or neither".into()),
     };
-    // Fail closed: accepting LOGIN7 requires TLS and a durable evidence sink.
-    let log_path = std::env::var("HADES_FORENSIC_JSONL").ok();
-    if tls.is_some() != log_path.is_some() {
-        return Err("HADES_TLS_CERT/KEY and HADES_FORENSIC_JSONL must all be set, or none".into());
-    }
-    let mut forensic = match log_path {
-        Some(path) => Some(open_evidence(Path::new(&path))?),
-        None => None,
-    };
+    // All accepted TCP connections are security evidence, even if the peer
+    // sends no PRELOGIN. Never start a blind listener without an evidence sink.
+    let log_path = std::env::var("HADES_FORENSIC_JSONL")
+        .map_err(|_| "HADES_FORENSIC_JSONL must be configured")?;
+    let mut forensic = open_evidence(Path::new(&log_path))?;
     let listener = TcpListener::bind(address)?;
     eprintln!("HADES experimental local-only listener on {bind}");
     eprintln!("WARNING: not production-ready; no ARES IPC or concurrent sessions");
     for connection in listener.incoming() {
         match connection {
             Ok(conn) => {
-                if let Err(err) = handle(conn, tls.clone(), forensic.as_mut()) {
+                let peer = conn.peer_addr()?;
+                let local = conn.local_addr()?;
+                // Fail closed: stop serving rather than lose evidence if the
+                // filesystem cannot persist a CRITICAL connection event.
+                let session_id = persist_connection(&mut forensic, peer, local)?;
+                eprintln!("TCP CONNECT peer={peer} session_id={session_id}");
+                if let Err(err) = handle(conn, tls.clone(), &mut forensic, &session_id) {
                     eprintln!("connection rejected: {err}");
                 }
             }
