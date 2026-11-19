@@ -1,0 +1,5 @@
+# Illustrative only. Sensor VLAN discovery is not yet implemented.
+V NAME ROLE
+18 MANAGEMENT CONTROL
+20 CLIENTS SENSOR
+30 SERVERS SENSOR

@@ -4,8 +4,8 @@ use std::ffi::OsString;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixDatagram;
-use std::process::{Child, Command, ExitStatus};
 use std::os::unix::process::CommandExt;
+use std::process::{Child, Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -96,8 +96,7 @@ fn handle_event(data: &[u8], state: &mut PhobosState) {
         "DISCONNECT" => {
             println!(
                 "ARES: DISCONNECT id={} reason={}",
-                payload["connection_id"],
-                payload["reason"]
+                payload["connection_id"], payload["reason"]
             );
         }
 
@@ -106,8 +105,7 @@ fn handle_event(data: &[u8], state: &mut PhobosState) {
 
             println!(
                 "ARES: CAPTURED id={} source={}",
-                payload["connection_id"],
-                payload["source_ip"]
+                payload["connection_id"], payload["source_ip"]
             );
         }
 
@@ -163,9 +161,7 @@ fn terminate_phobos(process: &mut Child) -> io::Result<ExitStatus> {
         return Ok(status);
     }
 
-    let result = unsafe {
-        libc::kill(process.id() as libc::pid_t, libc::SIGTERM)
-    };
+    let result = unsafe { libc::kill(process.id() as libc::pid_t, libc::SIGTERM) };
 
     if result != 0 {
         let error = io::Error::last_os_error();
@@ -189,10 +185,7 @@ fn terminate_phobos(process: &mut Child) -> io::Result<ExitStatus> {
     process.wait()
 }
 
-fn drain_ipc(
-    socket: &UnixDatagram,
-    state: &mut PhobosState,
-) -> io::Result<()> {
+fn drain_ipc(socket: &UnixDatagram, state: &mut PhobosState) -> io::Result<()> {
     socket.set_nonblocking(true)?;
 
     let mut buffer = [0u8; MAX_MESSAGE];
@@ -219,9 +212,7 @@ fn drain_ipc(
 fn wait_before_restart(duration: Duration) {
     let deadline = Instant::now() + duration;
 
-    while !SHUTDOWN.load(Ordering::Relaxed)
-        && Instant::now() < deadline
-    {
+    while !SHUTDOWN.load(Ordering::Relaxed) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(50));
     }
 }
@@ -231,9 +222,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut args = env::args_os().skip(1);
 
-    let executable = args.next().ok_or(
-        "Usage: ares <phobos-binary> <phobos-arguments...>"
-    )?;
+    let executable = args
+        .next()
+        .ok_or("Usage: ares <phobos-binary> <phobos-arguments...>")?;
 
     let arguments: Vec<OsString> = args.collect();
 
@@ -244,23 +235,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     while !SHUTDOWN.load(Ordering::Relaxed) {
         let started = Instant::now();
 
-        let (mut phobos, socket) =
-            match start_phobos(&executable, &arguments) {
-                Ok(result) => result,
+        let (mut phobos, socket) = match start_phobos(&executable, &arguments) {
+            Ok(result) => result,
 
-                Err(error) => {
-                    eprintln!("ARES: PHOBOS start failed: {error}");
+            Err(error) => {
+                eprintln!("ARES: PHOBOS start failed: {error}");
 
-                    failure_streak = failure_streak.saturating_add(1);
+                failure_streak = failure_streak.saturating_add(1);
 
-                    let seconds =
-                        (1u64 << failure_streak.saturating_sub(1).min(5))
-                            .min(30);
+                let seconds = (1u64 << failure_streak.saturating_sub(1).min(5)).min(30);
 
-                    wait_before_restart(Duration::from_secs(seconds));
-                    continue;
-                }
-            };
+                wait_before_restart(Duration::from_secs(seconds));
+                continue;
+            }
+        };
 
         let mut state = PhobosState::new();
         let mut watchdog_triggered = false;
@@ -316,8 +304,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             break;
         }
 
-        let normal_capture =
-            state.captured && exit_status.success() && !watchdog_triggered;
+        let normal_capture = state.captured && exit_status.success() && !watchdog_triggered;
 
         if normal_capture {
             failure_streak = 0;
@@ -335,12 +322,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         failure_streak = failure_streak.saturating_add(1);
 
-        let seconds =
-            (1u64 << failure_streak.saturating_sub(1).min(5)).min(30);
+        let seconds = (1u64 << failure_streak.saturating_sub(1).min(5)).min(30);
 
-        eprintln!(
-            "ARES: unexpected PHOBOS exit, restart in {seconds}s"
-        );
+        eprintln!("ARES: unexpected PHOBOS exit, restart in {seconds}s");
 
         wait_before_restart(Duration::from_secs(seconds));
     }

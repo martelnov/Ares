@@ -1,0 +1,14 @@
+# Prototype of ARES autonomous network discovery. Do not put in production.
+[network]
+# Fixed only by deployment policy, NOT hard-coded into the executable.
+management_vlan = 18
+# Either branch = 30 or branch = "auto" with branches_file.
+branch = 30
+branches_file = "config/BRANCH.tsv"
+state_file = "/var/lib/olymp/ares-network-state.json"
+auth_key_file = "/etc/olymp/ares-network.key"
+ip_first = 100
+ip_last = 240
+# Must be enabled ONLY for the very first provisioned ARES on the site.
+allow_first_node = false
+sync_seconds = 60
